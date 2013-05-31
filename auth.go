@@ -31,7 +31,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"github.com/fitstar/labix_mgo/bson"
+	"labix.org/v2/mgo/bson"
 	"sync"
 )
 

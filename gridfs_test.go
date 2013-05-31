@@ -29,8 +29,8 @@ package mgo_test
 import (
 	"io"
 	. "launchpad.net/gocheck"
-	"github.com/fitstar/labix_mgo"
-	"github.com/fitstar/labix_mgo/bson"
+	"labix.org/v2/mgo"
+	"labix.org/v2/mgo/bson"
 	"os"
 	"time"
 )
@@ -177,7 +177,7 @@ func (s *S) TestGridFSFileDetails(c *C) {
 		"md5":         "1e50210a0202497fb79bc38b6ade6c34",
 		"filename":    "myfile2.txt",
 		"contentType": "text/plain",
-		"metadata":    bson.M{"any": "thing"},
+		"metadata":    M{"any": "thing"},
 	}
 	c.Assert(result, DeepEquals, expected)
 }
@@ -249,7 +249,7 @@ func (s *S) TestGridFSCreateWithChunking(c *C) {
 			}
 			break
 		}
-		c.Assert(iter.Err(), IsNil)
+		c.Assert(iter.Close(), IsNil)
 
 		result["_id"] = "<id>"
 
@@ -589,7 +589,7 @@ func (s *S) TestGridFSOpenNext(c *C) {
 
 	ok = gfs.OpenNext(iter, &f)
 	c.Assert(ok, Equals, false)
-	c.Assert(iter.Err(), IsNil)
+	c.Assert(iter.Close(), IsNil)
 	c.Assert(f, IsNil)
 
 	// Do it again with a more restrictive query to make sure
@@ -602,6 +602,6 @@ func (s *S) TestGridFSOpenNext(c *C) {
 
 	ok = gfs.OpenNext(iter, &f)
 	c.Assert(ok, Equals, false)
-	c.Assert(iter.Err(), IsNil)
+	c.Assert(iter.Close(), IsNil)
 	c.Assert(f, IsNil)
 }

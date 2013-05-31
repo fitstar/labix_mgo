@@ -32,7 +32,7 @@ import (
 	"encoding/json"
 	"errors"
 	. "launchpad.net/gocheck"
-	"github.com/fitstar/labix_mgo/bson"
+	"labix.org/v2/mgo/bson"
 	"net/url"
 	"reflect"
 	"testing"
@@ -59,12 +59,17 @@ func wrapInDoc(data string) string {
 func makeZeroDoc(value interface{}) (zero interface{}) {
 	v := reflect.ValueOf(value)
 	t := v.Type()
-	if t.Kind() == reflect.Map {
+	switch t.Kind() {
+	case reflect.Map:
 		mv := reflect.MakeMap(t)
 		zero = mv.Interface()
-	} else {
+	case reflect.Ptr:
 		pv := reflect.New(v.Type().Elem())
 		zero = pv.Interface()
+	case reflect.Slice:
+		zero = reflect.New(t).Interface()
+	default:
+		panic("unsupported doc type")
 	}
 	return zero
 }
@@ -223,6 +228,18 @@ func (s *S) TestUnmarshalZeroesMap(c *C) {
 	err = bson.Unmarshal(data, &m)
 	c.Assert(err, IsNil)
 	c.Assert(m, DeepEquals, bson.M{"b": 2})
+}
+
+func (s *S) TestUnmarshalNonNilInterface(c *C) {
+	data, err := bson.Marshal(bson.M{"b": 2})
+	c.Assert(err, IsNil)
+	m := bson.M{"a": 1}
+	var i interface{}
+	i = m
+	err = bson.Unmarshal(data, &i)
+	c.Assert(err, IsNil)
+	c.Assert(i, DeepEquals, bson.M{"b": 2})
+	c.Assert(m, DeepEquals, bson.M{"a": 1})
 }
 
 // --------------------------------------------------------------------------
@@ -429,6 +446,8 @@ var marshalItems = []testItemType{
 	// Ordered document dump.  Will unmarshal as a dictionary by default.
 	{bson.D{{"a", nil}, {"c", nil}, {"b", nil}, {"d", nil}, {"f", nil}, {"e", true}},
 		"\x0Aa\x00\x0Ac\x00\x0Ab\x00\x0Ad\x00\x0Af\x00\x08e\x00\x01"},
+	{MyD{{"a", nil}, {"c", nil}, {"b", nil}, {"d", nil}, {"f", nil}, {"e", true}},
+		"\x0Aa\x00\x0Ac\x00\x0Ab\x00\x0Ad\x00\x0Af\x00\x08e\x00\x01"},
 	{&dOnIface{bson.D{{"a", nil}, {"c", nil}, {"b", nil}, {"d", true}}},
 		"\x03d\x00" + wrapInDoc("\x0Aa\x00\x0Ac\x00\x0Ab\x00\x08d\x00\x01")},
 	{&ignoreField{"before", "ignore", "after"},
@@ -533,9 +552,15 @@ var marshalErrorItems = []testItemType{
 	{bson.Raw{0x0A, []byte{}},
 		"Attempted to unmarshal Raw kind 10 as a document"},
 	{&inlineCantPtr{&struct{ A, B int }{1, 2}},
-		"Option ,inline needs a struct value field"},
+		"Option ,inline needs a struct value or map field"},
 	{&inlineDupName{1, struct{ A, B int }{2, 3}},
 		"Duplicated key 'a' in struct bson_test.inlineDupName"},
+	{&inlineDupMap{},
+		"Multiple ,inline maps in struct bson_test.inlineDupMap"},
+	{&inlineBadKeyMap{},
+		"Option ,inline needs a map with string keys in struct bson_test.inlineBadKeyMap"},
+	{&inlineMap{A: 1, M: map[string]interface{}{"a": 1}},
+		`Can't have key "a" in inlined map; conflicts with struct field`},
 }
 
 func (s *S) TestMarshalErrorItems(c *C) {
@@ -753,9 +778,7 @@ func (s *S) TestUnmarshalSetterOmits(c *C) {
 func (s *S) TestUnmarshalSetterErrors(c *C) {
 	boom := errors.New("BOOM")
 	setterResult["2"] = boom
-	defer func() {
-		delete(setterResult, "2")
-	}()
+	defer delete(setterResult, "2")
 
 	m := map[string]*setterType{}
 	data := wrapInDoc("\x02abc\x00\x02\x00\x00\x001\x00" +
@@ -774,6 +797,23 @@ func (s *S) TestDMap(c *C) {
 	d := bson.D{{"a", 1}, {"b", 2}}
 	c.Assert(d.Map(), DeepEquals, bson.M{"a": 1, "b": 2})
 }
+
+func (s *S) TestUnmarshalSetterSetZero(c *C) {
+	setterResult["foo"] = bson.SetZero
+	defer delete(setterResult, "field")
+
+	data, err := bson.Marshal(bson.M{"field": "foo"})
+	c.Assert(err, IsNil)
+
+	m := map[string]*setterType{}
+	err = bson.Unmarshal([]byte(data), m)
+	c.Assert(err, IsNil)
+
+	value, ok := m["field"]
+	c.Assert(ok, Equals, true)
+	c.Assert(value, IsNil)
+}
+
 
 // --------------------------------------------------------------------------
 // Getter test cases.
@@ -869,6 +909,9 @@ type condInt struct {
 type condUInt struct {
 	V uint ",omitempty"
 }
+type condFloat struct {
+	V float64 ",omitempty"
+}
 type condIface struct {
 	V interface{} ",omitempty"
 }
@@ -914,9 +957,30 @@ type inlineDupName struct {
 	A int
 	V struct{ A, B int } ",inline"
 }
+type inlineMap struct {
+	A int
+	M map[string]interface{} ",inline"
+}
+type inlineMapInt struct {
+	A int
+	M map[string]int ",inline"
+}
+type inlineMapMyM struct {
+	A int
+	M MyM ",inline"
+}
+type inlineDupMap struct {
+	M1 map[string]interface{} ",inline"
+	M2 map[string]interface{} ",inline"
+}
+type inlineBadKeyMap struct {
+	M map[int]int ",inline"
+}
 
 type MyBytes []byte
 type MyBool bool
+type MyD []bson.DocElem
+type MyM map[string]interface{}
 
 var truevar = true
 var falsevar = false
@@ -1040,6 +1104,7 @@ var twoWayCrossItems = []crossTypeItem{
 	{&condInt{}, map[string]int{}},
 	{&condUInt{1}, map[string]uint{"v": 1}},
 	{&condUInt{}, map[string]uint{}},
+	{&condFloat{}, map[string]int{}},
 	{&condStr{"yo"}, map[string]string{"v": "yo"}},
 	{&condStr{}, map[string]string{}},
 	{&condStrNS{"yo"}, map[string]string{"v": "yo"}},
@@ -1074,6 +1139,11 @@ var twoWayCrossItems = []crossTypeItem{
 	{&shortNonEmptyInt{}, map[string]interface{}{}},
 
 	{&inlineInt{struct{ A, B int }{1, 2}}, map[string]interface{}{"a": 1, "b": 2}},
+	{&inlineMap{A: 1, M: map[string]interface{}{"b": 2}}, map[string]interface{}{"a": 1, "b": 2}},
+	{&inlineMap{A: 1, M: nil}, map[string]interface{}{"a": 1}},
+	{&inlineMapInt{A: 1, M: map[string]int{"b": 2}}, map[string]int{"a": 1, "b": 2}},
+	{&inlineMapInt{A: 1, M: nil}, map[string]int{"a": 1}},
+	{&inlineMapMyM{A: 1, M: MyM{"b": MyM{"c": 3}}}, map[string]interface{}{"a": 1, "b": map[string]interface{}{"c": 3}}},
 
 	// []byte <=> MyBytes
 	{&struct{ B MyBytes }{[]byte("abc")}, map[string]string{"b": "abc"}},
@@ -1096,13 +1166,23 @@ var twoWayCrossItems = []crossTypeItem{
 	// zero time + 1 second + 1 millisecond; overflows int64 as nanoseconds
 	{&struct{ V time.Time }{time.Unix(-62135596799, 1e6).Local()},
 		map[string]interface{}{"v": time.Unix(-62135596799, 1e6).Local()}},
+
+	// bson.D <=> []DocElem
+	{&bson.D{{"a", bson.D{{"b", 1}, {"c", 2}}}}, &bson.D{{"a", bson.D{{"b", 1}, {"c", 2}}}}},
+	{&bson.D{{"a", bson.D{{"b", 1}, {"c", 2}}}}, &MyD{{"a", MyD{{"b", 1}, {"c", 2}}}}},
+
+	// bson.M <=> map
+	{bson.M{"a": bson.M{"b": 1, "c": 2}}, MyM{"a": MyM{"b": 1, "c": 2}}},
+	{bson.M{"a": bson.M{"b": 1, "c": 2}}, map[string]interface{}{"a": map[string]interface{}{"b": 1, "c": 2}}},
 }
 
 // Same thing, but only one way (obj1 => obj2).
 var oneWayCrossItems = []crossTypeItem{
 	// map <=> struct
-	{map[string]interface{}{"a": 1, "b": "2", "c": 3},
-		map[string]int{"a": 1, "c": 3}},
+	{map[string]interface{}{"a": 1, "b": "2", "c": 3}, map[string]int{"a": 1, "c": 3}},
+
+	// inline map elides badly typed values
+	{map[string]interface{}{"a": 1, "b": "2", "c": 3}, &inlineMapInt{A: 1, M: map[string]int{"c": 3}}},
 
 	// Can't decode int into struct.
 	{bson.M{"a": bson.M{"b": 2}}, &struct{ A bool }{}},
@@ -1144,6 +1224,18 @@ func (s *S) TestObjectIdHex(c *C) {
 	id := bson.ObjectIdHex("4d88e15b60f486e428412dc9")
 	c.Assert(id.String(), Equals, `ObjectIdHex("4d88e15b60f486e428412dc9")`)
 	c.Assert(id.Hex(), Equals, "4d88e15b60f486e428412dc9")
+}
+
+func (s *S) TestIsObjectIdHex(c *C) {
+	test := []struct{ id string; valid bool }{
+		{"4d88e15b60f486e428412dc9", true},
+		{"4d88e15b60f486e428412dc", false},
+		{"4d88e15b60f486e428412dc9e", false},
+		{"4d88e15b60f486e428412dcx", false},
+	}
+	for _, t := range test {
+		c.Assert(bson.IsObjectIdHex(t.id), Equals, t.valid)
+	}
 }
 
 // --------------------------------------------------------------------------

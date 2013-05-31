@@ -28,6 +28,7 @@
 package bson
 
 import (
+	"fmt"
 	"math"
 	"net/url"
 	"reflect"
@@ -130,6 +131,18 @@ func (e *encoder) addStruct(v reflect.Value) {
 		panic(err)
 	}
 	var value reflect.Value
+	if sinfo.InlineMap >= 0 {
+		m := v.Field(sinfo.InlineMap)
+		if m.Len() > 0 {
+			for _, k := range m.MapKeys() {
+				ks := k.String()
+				if _, found := sinfo.FieldsMap[ks]; found {
+					panic(fmt.Sprintf("Can't have key %q in inlined map; conflicts with struct field", ks))
+				}
+				e.addElem(ks, m.MapIndex(k), false)
+			}
+		}
+	}
 	for _, info := range sinfo.FieldsList {
 		if info.Inline == nil {
 			value = v.Field(info.Num)
@@ -157,6 +170,8 @@ func isZero(v reflect.Value) bool {
 		return v.Int() == 0
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
 		return v.Uint() == 0
+	case reflect.Float32, reflect.Float64:
+		return v.Float() == 0
 	case reflect.Bool:
 		return !v.Bool()
 	case reflect.Struct:
@@ -172,8 +187,15 @@ func (e *encoder) addSlice(v reflect.Value) {
 		for _, elem := range d {
 			e.addElem(elem.Name, reflect.ValueOf(elem.Value), false)
 		}
+	} else if v.Type().Elem() == typeDocElem {
+		l := v.Len()
+		for i := 0; i < l; i++ {
+			elem := v.Index(i).Interface().(DocElem)
+			e.addElem(elem.Name, reflect.ValueOf(elem.Value), false)
+		}
 	} else {
-		for i := 0; i != v.Len(); i++ {
+		l := v.Len()
+		for i := 0; i < l; i++ {
 			e.addElem(itoa(i), v.Index(i), false)
 		}
 	}

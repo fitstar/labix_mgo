@@ -28,7 +28,7 @@ package mgo
 
 import (
 	"errors"
-	"github.com/fitstar/labix_mgo/bson"
+	"labix.org/v2/mgo/bson"
 	"net"
 	"sync"
 )
@@ -38,7 +38,7 @@ type replyFunc func(err error, reply *replyOp, docNum int, docData []byte)
 type mongoSocket struct {
 	sync.Mutex
 	server        *mongoServer // nil when cached
-	conn          *net.TCPConn
+	conn          net.Conn
 	addr          string // For debugging only.
 	nextRequestId uint32
 	replyFuncs    map[uint32]replyFunc
@@ -92,12 +92,16 @@ type deleteOp struct {
 	flags      uint32
 }
 
+type killCursorsOp struct {
+	cursorIds []int64
+}
+
 type requestInfo struct {
 	bufferPos int
 	replyFunc replyFunc
 }
 
-func newSocket(server *mongoServer, conn *net.TCPConn) *mongoSocket {
+func newSocket(server *mongoServer, conn net.Conn) *mongoSocket {
 	socket := &mongoSocket{conn: conn, addr: server.Addr}
 	socket.gotNonce.L = &socket.Mutex
 	socket.replyFuncs = make(map[uint32]replyFunc)
@@ -110,6 +114,15 @@ func newSocket(server *mongoServer, conn *net.TCPConn) *mongoSocket {
 	socket.resetNonce()
 	go socket.readLoop()
 	return socket
+}
+
+// Server returns the server that the socket is associated with.
+// It returns nil while the socket is cached in its respective server.
+func (socket *mongoSocket) Server() *mongoServer {
+	socket.Lock()
+	server := socket.server
+	socket.Unlock()
+	return server
 }
 
 // InitialAcquire obtains the first reference to the socket, either
@@ -310,6 +323,14 @@ func (socket *mongoSocket) Query(ops ...interface{}) (err error) {
 				return err
 			}
 
+		case *killCursorsOp:
+			buf = addHeader(buf, 2007)
+			buf = addInt32(buf, 0) // Reserved
+			buf = addInt32(buf, int32(len(op.cursorIds)))
+			for _, cursorId := range op.cursorIds {
+				buf = addInt64(buf, cursorId)
+			}
+
 		default:
 			panic("Internal error: unknown operation type")
 		}
@@ -329,7 +350,7 @@ func (socket *mongoSocket) Query(ops ...interface{}) (err error) {
 	socket.Lock()
 	if socket.dead != nil {
 		socket.Unlock()
-		debug("Socket %p to %s: failing query, already closed: %s", socket, socket.addr, socket.dead.Error())
+		debugf("Socket %p to %s: failing query, already closed: %s", socket, socket.addr, socket.dead.Error())
 		// XXX This seems necessary in case the session is closed concurrently
 		// with a query being performed, but it's not yet tested:
 		for i := 0; i != requestCount; i++ {
@@ -362,7 +383,7 @@ func (socket *mongoSocket) Query(ops ...interface{}) (err error) {
 	return err
 }
 
-func fill(r *net.TCPConn, b []byte) error {
+func fill(r net.Conn, b []byte) error {
 	l := len(b)
 	n, err := r.Read(b)
 	for n != l && err == nil {

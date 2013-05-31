@@ -4,7 +4,7 @@
 // the Go language.  High-level details about the project may be found
 // at its web page:
 //
-//     http://github.com/fitstar/labix_mgo/mgo
+//     http://labix.org/mgo
 //
 // Usage of the driver revolves around the concept of sessions.  To
 // get started, obtain a session using the Dial function:
