@@ -2,8 +2,8 @@ package txn
 
 import (
 	"fmt"
-	"labix.org/v2/mgo"
-	"labix.org/v2/mgo/bson"
+	"github.com/fitstar/labix_mgo"
+	"github.com/fitstar/labix_mgo/bson"
 	"sort"
 )
 

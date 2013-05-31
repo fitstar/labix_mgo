@@ -32,7 +32,7 @@ import (
 	"encoding/json"
 	"errors"
 	. "launchpad.net/gocheck"
-	"labix.org/v2/mgo/bson"
+	"github.com/fitstar/labix_mgo/bson"
 	"net/url"
 	"reflect"
 	"testing"
